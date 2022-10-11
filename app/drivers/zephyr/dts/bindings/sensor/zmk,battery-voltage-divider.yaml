@@ -11,3 +11,7 @@ properties:
   label:
     required: true
     type: string
+  chg-gpios:
+    required: false
+    type: phandle-array
+    description: "A GPIO pin to report charging state to"

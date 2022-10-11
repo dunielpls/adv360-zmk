@@ -19,9 +19,15 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/battery.h>
 #include <zmk/events/battery_state_changed.h>
 
+#if CONFIG_ZMK_BATTERY_VOLTAGE_DIVIDER
+#include <drivers/sensor/battery/battery_voltage_divider.h>
+#endif
+
 static uint8_t last_state_of_charge = 0;
+static bool charging = 0;
 
 uint8_t zmk_battery_state_of_charge() { return last_state_of_charge; }
+bool zmk_battery_charging() { return charging; }
 
 #if DT_HAS_CHOSEN(zmk_battery)
 static const struct device *const battery = DEVICE_DT_GET(DT_CHOSEN(zmk_battery));
@@ -63,6 +69,14 @@ static int zmk_battery_update(const struct device *battery) {
         rc = ZMK_EVENT_RAISE(new_zmk_battery_state_changed(
             (struct zmk_battery_state_changed){.state_of_charge = last_state_of_charge}));
     }
+
+    #if CONFIG_ZMK_BATTERY_VOLTAGE_DIVIDER
+    rc = sensor_channel_get(battery, SENSOR_CHAN_CHARGING, &charging);
+    if (rc != 0) {
+        LOG_DBG("Failed to get battery state of charge: %d", rc);
+        return rc;
+    }
+    #endif
 
     return rc;
 }

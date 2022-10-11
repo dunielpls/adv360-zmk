@@ -14,6 +14,7 @@
 #include <logging/log.h>
 
 #include "battery_common.h"
+#include <drivers/sensor/battery/battery_voltage_divider.h>
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
@@ -30,6 +31,7 @@ struct gpio_channel_config {
 struct bvd_config {
     struct io_channel_config io_channel;
     struct gpio_channel_config power_gpios;
+    struct gpio_channel_config chg_gpios;
     uint32_t output_ohm;
     uint32_t full_ohm;
 };
@@ -37,6 +39,7 @@ struct bvd_config {
 struct bvd_data {
     const struct device *adc;
     const struct device *gpio;
+    const struct device *gpio2;
     struct adc_channel_cfg acc;
     struct adc_sequence as;
     struct battery_value value;
@@ -48,7 +51,7 @@ static int bvd_sample_fetch(const struct device *dev, enum sensor_channel chan) 
     struct adc_sequence *as = &drv_data->as;
 
     // Make sure selected channel is supported
-    if (chan != SENSOR_CHAN_GAUGE_VOLTAGE && chan != SENSOR_CHAN_GAUGE_STATE_OF_CHARGE &&
+    if (chan != SENSOR_CHAN_GAUGE_VOLTAGE && chan != SENSOR_CHAN_GAUGE_STATE_OF_CHARGE && chan != SENSOR_CHAN_CHARGING &&
         chan != SENSOR_CHAN_ALL) {
         LOG_DBG("Selected channel is not supported: %d.", chan);
         return -ENOTSUP;
@@ -100,6 +103,17 @@ static int bvd_sample_fetch(const struct device *dev, enum sensor_channel chan) 
         }
     }
 
+    if (drv_data->gpio2) {
+        int raw = gpio_pin_get(drv_data->gpio, drv_cfg->chg_gpios.pin);
+        if(raw == -EIO || raw == -EWOULDBLOCK) {
+            LOG_ERR("Failed to read charging state: &d", raw);
+            return raw;
+        } else {
+            bool charging = raw;
+            drv_data->value.charging = charging;
+        }
+    }
+
     return rc;
 }
 
@@ -136,6 +150,21 @@ static int bvd_init(const struct device *dev) {
         if (rc != 0) {
             LOG_ERR("Failed to control feed %s.%u: %d", drv_cfg->power_gpios.label,
                     drv_cfg->power_gpios.pin, rc);
+            return rc;
+        }
+    }
+
+    if (drv_cfg->chg_gpios.label) {
+        drv_data->gpio2 = device_get_binding(drv_cfg->chg_gpios.label);
+        if (drv_data->gpio2 == NULL) {
+            LOG_ERR("Failed to get GPIO %s", drv_cfg->chg_gpios.label);
+            return -ENODEV;
+        }
+        rc = gpio_pin_configure(drv_data->gpio2, drv_cfg->chg_gpios.pin,
+                                GPIO_INPUT | drv_cfg->chg_gpios.flags);
+        if (rc != 0) {
+            LOG_ERR("Failed to configure input %s.%u: %d", drv_cfg->chg_gpios.label,
+                    drv_cfg->chg_gpios.pin, rc);
             return rc;
         }
     }
@@ -180,6 +209,14 @@ static const struct bvd_config bvd_cfg = {
             DT_INST_GPIO_LABEL(0, power_gpios),
             DT_INST_GPIO_PIN(0, power_gpios),
             DT_INST_GPIO_FLAGS(0, power_gpios),
+        },
+#endif
+#if DT_INST_NODE_HAS_PROP(0, chg_gpios)
+    .chg_gpios =
+        {
+            DT_INST_GPIO_LABEL(0, chg_gpios),
+            DT_INST_GPIO_PIN(0, chg_gpios),
+            DT_INST_GPIO_FLAGS(0, chg_gpios),
         },
 #endif
     .output_ohm = DT_INST_PROP(0, output_ohms),
